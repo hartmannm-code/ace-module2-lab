@@ -21,6 +21,95 @@ function favicon () {
   return utils.extractFilename(config.get('application.favicon'))
 }
 
+function safeEvalMath (expr: string): number {
+  if (!/^[\d+\-*/%().\s]+$/.test(expr)) {
+    throw new Error('Invalid characters in expression')
+  }
+  const tokens = expr.match(/\d+(?:\.\d+)?|[+\-*/%()]/g)
+  if (!tokens) {
+    throw new Error('No tokens')
+  }
+  let pos = 0
+  const peek = (): string | undefined => tokens[pos]
+  const consume = (expected?: string): string => {
+    const tok = tokens[pos++]
+    if (expected !== undefined && tok !== expected) {
+      throw new Error(`Expected ${expected} but got ${tok}`)
+    }
+    return tok
+  }
+  function parsePrimary (): number {
+    const tok = peek()
+    if (tok === '(') {
+      consume('(')
+      const val = parseExpr()
+      consume(')')
+      return val
+    }
+    if (tok && /^\d/.test(tok)) {
+      consume()
+      return Number(tok)
+    }
+    throw new Error(`Unexpected token: ${tok}`)
+  }
+  function parseFactor (): number {
+    const tok = peek()
+    if (tok === '+') {
+      consume('+')
+      return parseFactor()
+    }
+    if (tok === '-') {
+      consume('-')
+      return -parseFactor()
+    }
+    return parsePrimary()
+  }
+  function parseTerm (): number {
+    let val = parseFactor()
+    while (true) {
+      const tok = peek()
+      if (tok === '*') {
+        consume('*')
+        val *= parseFactor()
+      } else if (tok === '/') {
+        consume('/')
+        const divisor = parseFactor()
+        if (divisor === 0) {
+          throw new Error('Division by zero')
+        }
+        val /= divisor
+      } else if (tok === '%') {
+        consume('%')
+        val %= parseFactor()
+      } else {
+        break
+      }
+    }
+    return val
+  }
+  function parseExpr (): number {
+    let val = parseTerm()
+    while (true) {
+      const tok = peek()
+      if (tok === '+') {
+        consume('+')
+        val += parseTerm()
+      } else if (tok === '-') {
+        consume('-')
+        val -= parseTerm()
+      } else {
+        break
+      }
+    }
+    return val
+  }
+  const result = parseExpr()
+  if (pos < tokens.length) {
+    throw new Error('Trailing input')
+  }
+  return result
+}
+
 export function getUserProfile () {
   return async (req: Request, res: Response, next: NextFunction) => {
     let template: string
@@ -58,7 +147,7 @@ export function getUserProfile () {
         if (!code) {
           throw new Error('Username is null')
         }
-        username = eval(code) // eslint-disable-line no-eval
+        username = String(safeEvalMath(code))
       } catch (err) {
         username = '\\' + username
       }
